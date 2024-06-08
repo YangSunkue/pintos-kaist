@@ -1,5 +1,12 @@
 /* anon.c: Implementation of page for non-disk image (a.k.a. anonymous page). */
 
+// Anonymous Page를 위한 기능 제공 //
+// Anonymous Page를 위한 기능 제공 //
+// Anonymous Page를 위한 기능 제공 //
+// Anonymous Page를 위한 기능 제공 //
+// Anonymous Page를 위한 기능 제공 //
+
+
 #include "vm/vm.h"
 #include "devices/disk.h"
 
@@ -18,6 +25,7 @@ static const struct page_operations anon_ops = {
 };
 
 /* Initialize the data for anonymous pages */
+// 필요에 따라서 수정하라는데...
 void
 vm_anon_init (void) {
 	/* TODO: Set up the swap_disk. */
@@ -25,6 +33,7 @@ vm_anon_init (void) {
 }
 
 /* Initialize the file mapping */
+// 필요에 따라서 수정하라는데...
 bool
 anon_initializer (struct page *page, enum vm_type type, void *kva) {
 	/* Set up the handler */
