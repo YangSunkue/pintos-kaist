@@ -35,6 +35,7 @@
 #define KERN_BASE LOADER_KERN_BASE
 
 /* User stack start */
+// pintos는 교육용 운영체제이기 때문에 구현이 쉽도록 고정된 stack주소를 사용하는 것 같다..
 #define USER_STACK 0x47480000
 
 /* Returns true if VADDR is a user virtual address. */

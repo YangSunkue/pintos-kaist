@@ -18,9 +18,9 @@
 #include "threads/mmu.h"
 #include "threads/vaddr.h"
 #include "intrinsic.h"
-#include "/pintos-kaist/include/vm/vm.h"
 #include "userprog/syscall.h"
 #ifdef VM
+#include "vm/vm.h"
 #include "userprog/syscall.h"
 #endif
 
@@ -740,11 +740,37 @@ install_page (void *upage, void *kpage, bool writable) {
  * If you want to implement the function for only project 2, implement it on the
  * upper block. */
 
+// page fault가 발생했을 때 lazy load하는 함수
+// 디스크에서 메모리로 데이터를 load한다
 static bool
 lazy_load_segment (struct page *page, void *aux) {
 	/* TODO: Load the segment from the file */
 	/* TODO: This called when the first page fault occurs on address VA. */
 	/* TODO: VA is available when calling this function. */
+	// VA에서 첫 page fault가 발생할 때 호출된다.
+	// VA와 매핑된 프레임에서 세그먼트(데이터) 로드하는 함수
+	// load를 지연시키다가 page fault가 발생했을 때 로드하므로 lazy_load_segment 인 것이다.
+
+	// aux로 받은 읽어올 파일정보 가져오기
+	struct lazyLoadArg *lazyLoadArg = (struct lazyLoadArg *)aux;
+
+	// 파일 position을 offset으로 지정한다 (offset부터 읽는다)
+	file_seek(lazyLoadArg->file, lazyLoadArg->offset);
+
+	// 파일을 read_bytes만큼 프레임에 읽어온다
+	if(file_read(lazyLoadArg->file, page->frame->kva, lazyLoadArg->readBytes) != (int)lazyLoadArg->readBytes) {
+
+		// 제대로 읽어오지 못했다면 frame을 free 해준다
+		// free라는 건 프레임과의 매핑정보 해제와, 프레임을 free상태로 전환하는 것을 의미한다.
+		// 쓰여진 데이터를 지우진 않는다.
+		palloc_free_page(page->frame->kva);
+		return false;
+	}
+
+	// 읽어온 데이터 바로 뒷 부분부터 zerobytes 만큼 0으로 채운다
+	memset(page->frame->kva + lazyLoadArg->readBytes, 0, lazyLoadArg->zeroBytes);
+
+	return true;
 }
 
 /* Loads a segment starting at offset OFS in FILE at address
@@ -761,6 +787,9 @@ lazy_load_segment (struct page *page, void *aux) {
  *
  * Return true if successful, false if a memory allocation error
  * or disk read error occurs. */
+// 파일의 특정 offset에서 시작하는 세그먼트를 메모리에 로드한다.
+// 주어진 offset부터 시작해서, read_bytes 만큼 데이터를 읽고, zero_bytes 만큼의 메모리를 0으로 초기화한다.
+// 얘는 lazy loading 아니고, 프로그램 로드 초기에 필요한 데이터를 메모리에 로드할 때 사용된다.
 static bool
 load_segment (struct file *file, off_t ofs, uint8_t *upage,
 		uint32_t read_bytes, uint32_t zero_bytes, bool writable) {
@@ -768,37 +797,77 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 	ASSERT (pg_ofs (upage) == 0);
 	ASSERT (ofs % PGSIZE == 0);
 
+	// 페이지 단위로, 파일을 읽어올 메타데이터를 첨부한다
+	// read_byte 또는 zero_byte가 남아있다면 루프를 돈다
 	while (read_bytes > 0 || zero_bytes > 0) {
 		/* Do calculate how to fill this page.
 		 * We will read PAGE_READ_BYTES bytes from FILE
 		 * and zero the final PAGE_ZERO_BYTES bytes. */
+
+		// 읽어야 할 바이트 수, 0으로 초기화할 바이트 수 계산
 		size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
 		size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
 		/* TODO: Set up aux to pass information to the lazy_load_segment. */
-		void *aux = NULL;
+		// lazy_load_segment 함수 인자로 전달할 구조체 만들기
+		struct lazyLoadArg *lazyLoadArg = (struct lazyLoadArg *)malloc(sizeof(struct lazyLoadArg));
+		lazyLoadArg->file = file;
+		lazyLoadArg->offset = ofs;
+		lazyLoadArg->readBytes = page_read_bytes;
+		lazyLoadArg->zeroBytes = page_zero_bytes;
+
+
+		// 실행 파일은 수정할 필요가 없기 때문에 ANON으로 한다
+		// 프로그램의 기능을 이용하고자 하는 것이지 수정하고자 여는 것이 아니기 때문이다
+		// file-backed로 하면 실행파일이 변경/수정될 수도 있고, 프로그램 기능을 이용하려는 취지에 맞지 않기 때문에 ANON으로 하는게 나은 것 같다.
+		// file-backed는 mmap으로 매핑된 파일들에 대해서 할당하면 된다
 		if (!vm_alloc_page_with_initializer (VM_ANON, upage,
-					writable, lazy_load_segment, aux))
+					writable, lazy_load_segment, lazyLoadArg))
 			return false;
 
 		/* Advance. */
+		// 읽은 바이트 수와 0으로 초기화한 바이트 수를 감소시킨다.
 		read_bytes -= page_read_bytes;
 		zero_bytes -= page_zero_bytes;
+
+		// 읽거나 0으로 만든 byte만큼 offset을 뒤로 민다
+		ofs += page_read_bytes;
+		// 다음 페이지로 이동한다.
 		upage += PGSIZE;
+
 	}
 	return true;
 }
 
 /* Create a PAGE of stack at the USER_STACK. Return true on success. */
+// 사용자 스택 페이지 생성 및 초기화
 static bool
 setup_stack (struct intr_frame *if_) {
-	bool success = false;
-	void *stack_bottom = (void *) (((uint8_t *) USER_STACK) - PGSIZE);
 
+	bool success = false;
+
+	// 스택은 아래로 성장하므로, 스택 시작주소에서 PGSIZE를 뺀 부분을 stack_bottom으로 설정한다.
+	// stack_bottom은 첫 번째 페이지가 할당될 시작 주소를 의미한다.
+	void *stack_bottom = (void *) (((uint8_t *) USER_STACK) - PGSIZE);
+	
 	/* TODO: Map the stack on stack_bottom and claim the page immediately.
 	 * TODO: If success, set the rsp accordingly.
 	 * TODO: You should mark the page is stack. */
 	/* TODO: Your code goes here */
+
+	// 스택 페이지 식별자 추가해서 stack_bottom에 페이지 하나 할당받기.
+	// 성공하면 true, 실패하면 false 리턴한다
+	if(vm_alloc_page(VM_ANON | VM_MARKER_0, stack_bottom, 1)) {
+		
+		// 스택 페이지 할당 성공했으면 즉시 물리 프레임 매핑해준다.
+		// 프레임과 연결해서, page table에 넣고, swap_in 호출해서 메모리에 올린다.
+		if(success = vm_claim_page(stack_bottom)) {
+	
+			// rsp 변경해주기
+			// 사용할 수 있는 페이지+메모리 할당했으니, USER_STACK부분부터 최대 stack_bottom 위치까지 rsp를 줄이면서 메모리에 값을 쓸 수 있다.
+			if_->rsp = USER_STACK;
+		}
+	}
 
 	return success;
 }

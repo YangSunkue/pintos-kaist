@@ -5,9 +5,18 @@
 
    See hash.h for basic information. */
 
+//// 해시 테이블 ////
+//// 해시 테이블 ////
+//// 해시 테이블 ////
+//// 해시 테이블 ////
+//// 해시 테이블 ////
+//// 해시 테이블 ////
+
+
 #include "hash.h"
 #include "../debug.h"
 #include "threads/malloc.h"
+#include "vm/vm.h"
 
 #define list_elem_to_hash_elem(LIST_ELEM)                       \
 	list_entry(LIST_ELEM, struct hash_elem, list_elem)
@@ -18,9 +27,37 @@ static struct hash_elem *find_elem (struct hash *, struct list *,
 static void insert_elem (struct hash *, struct list *, struct hash_elem *);
 static void remove_elem (struct hash *, struct hash_elem *);
 static void rehash (struct hash *);
+/////////////////////////////////////////////////////
+
+// hash_init의 2번째 인자로 들어갈 해시함수
+// 주어진 hash_elem을 가진 page의 주소값을 해시하여 리턴한다.
+unsigned
+page_hash(const struct hash_elem *p_, void *aux UNUSED) {
+	
+	// hash_elem을 가진 page 가져오기
+	const struct page *p = hash_entry(p_, struct page, hash_elem);
+
+	// 페이지가 가진 VA를 해시하여 리턴한다
+	return hash_bytes(&p->va, sizeof p->va);
+}
+
+// hash_init의 3번째 인자로 들어갈 비교함수
+// 주어진 hash_elem 2개의 page VA를 비교하여, b가 크면 True 아니면 False를 리턴한다
+bool
+page_less(const struct hash_elem *a_, const struct hash_elem *b_, void *aux UNUSED) {
+
+	// hash elem a_ , b_ 에 대한 page 가져오기
+	const struct page *a = hash_entry(a_, struct page, hash_elem);
+	const struct page *b = hash_entry(b_, struct page, hash_elem);
+
+	return a->va < b->va;
+}
+
 
 /* Initializes hash table H to compute hash values using HASH and
    compare hash elements using LESS, given auxiliary data AUX. */
+// 해시 테이블을 초기화하는 함수
+// hash : 해시함수 , hash_less_func : 비교함수 , aux : 보조 데이터. 보통은 NULL이다.
 bool
 hash_init (struct hash *h,
 		hash_hash_func *hash, hash_less_func *less, void *aux) {
@@ -240,6 +277,7 @@ hash_empty (struct hash *h) {
 #define FNV_64_BASIS 0xcbf29ce484222325UL
 
 /* Returns a hash of the SIZE bytes in BUF. */
+// 주어진 포인터의 해시값을 리턴하는 함수
 uint64_t
 hash_bytes (const void *buf_, size_t size) {
 	/* Fowler-Noll-Vo 32-bit hash, for bytes. */

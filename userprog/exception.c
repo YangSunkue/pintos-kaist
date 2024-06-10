@@ -116,6 +116,11 @@ kill (struct intr_frame *f) {
    can find more information about both of these in the
    description of "Interrupt 14--Page Fault Exception (#PF)" in
    [IA32-v3a] section 5.15 "Exception and Interrupt Reference". */
+
+// page fault 핸들러 ////
+// page fault 핸들러 ////
+// page fault 핸들러 ////
+// vm_try_handle_fault() 호출
 static void
 page_fault (struct intr_frame *f) {
 	bool not_present;  /* True: not-present page, false: writing r/o page. */
@@ -140,7 +145,7 @@ page_fault (struct intr_frame *f) {
 	write = (f->error_code & PF_W) != 0;
 	user = (f->error_code & PF_U) != 0;
 
-	exit(-1);//스레드 종료. bad-read, bad-write ... 해결
+	
 
 #ifdef VM
 	/* For project 3 and later. */
@@ -157,6 +162,8 @@ page_fault (struct intr_frame *f) {
 			not_present ? "not present" : "rights violation",
 			write ? "writing" : "reading",
 			user ? "user" : "kernel");
+			
+	exit(-1);//스레드 종료. bad-read, bad-write ... 해결
 	kill (f);
 }
 

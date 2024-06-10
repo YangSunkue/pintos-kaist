@@ -355,6 +355,36 @@ vm_do_claim_page (struct page *page) {
 	return swap_in (page, frame->kva);
 }
 
+
+/** Project 3-Copy On Write */
+static bool 
+vm_copy_claim_page(struct supplemental_page_table *dst, void *va, void *kva, bool writable) {
+    struct page *page = spt_find_page(dst, va);
+
+    if (page == NULL)
+        return false;
+
+    struct frame *frame = (struct frame *)malloc(sizeof(struct frame));
+
+    if (!frame)
+        return false;
+
+    page->accessible = writable; 
+    frame->page = page;
+    page->frame = frame;
+    frame->kva = kva;
+
+    if (!pml4_set_page(thread_current()->pml4, page->va, frame->kva, false)) {
+        free(frame);
+        return false;
+    }
+
+    list_push_back(&frame_table, &frame->frame_elem); 
+
+    return swap_in(page, frame->kva);
+}
+
+
 /* Initialize new supplemental page table */
 // 새로운 SPT 테이블을 초기화하는 함수
 // initd에서 새로운 프로세스가 시작하거나, __do_fork로 자식 프로세스가 생성될 때 호출된다.
@@ -368,14 +398,86 @@ supplemental_page_table_init (struct supplemental_page_table *spt UNUSED) {
 }
 
 /* Copy supplemental page table from src to dst */
+// src에서 dst로 spt를 복사한다.
 bool
 supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
 		struct supplemental_page_table *src UNUSED) {
+		
+		// 해시 테이블 순회를 위한 반복자
+		struct hash_iterator iter;
+		hash_first(&iter, &src->sptHash);  // iter가 sptHash의 첫 번째 요소를 가리키도록 한다 ( 리스트 head라서 더미데이터임 )
+
+		// 다음 요소부터 while문 반복한다
+		while(hash_next(&iter)) {
+
+			// page 가져오기
+			struct page *src_page = hash_entry(hash_cur(&iter), struct page, hash_elem);
+
+			enum vm_type type = src_page->operations->type;  // type 가져오기
+			void *upage = src_page->va;  					 // va 가져오기
+			bool writable = src_page->writable;				 // writable 가져오기
+
+			// uninit page일 경우
+			if(type == VM_UNINIT) {
+				void *aux = src_page->uninit.aux;     		 // 초기화를 위한 보조 데이터 가져오기
+				// src spt에서 가져온 정보들로 페이지 만들기
+				vm_alloc_page_with_initializer(page_get_type(src_page), upage, writable, src_page->uninit.init, aux);
+			}
+
+			// File-backed page 일 경우
+			else if(type == VM_FILE) {
+
+				// 인자로 전달할 aux 제작(복사)하기
+				struct lazyLoadArg *aux = (struct lazyLoadArg *)malloc(sizeof(struct lazyLoadArg));
+				aux->file = src_page->file.file;
+				aux->offset = src_page->file.offset;
+				aux->readBytes = src_page->file.page_read_bytes;
+
+				// 여기서 페이지 할당하고 spt에 들어간다
+				if(!vm_alloc_page_with_initializer(type, upage, writable, NULL, aux)) {
+					return false;
+				}
+
+				// spt에서 찾아서 file-backed로 초기화하기.
+				struct page *dst_page = spt_find_page(dst, upage);
+				file_backed_initializer(dst_page, type, NULL);    // kva를 NULL로 준 후 frame을 통째로 복사한다.
+				dst_page->frame = src_page->frame;
+				// 현재 스레드 page table에 넣기
+				pml4_set_page(thread_current()->pml4, dst_page->va, src_page->frame->kva, src_page->writable);
+			}
+
+			// Anonymous page일 경우
+			else {
+				if(!vm_alloc_page(type, upage, writable)) {
+					return false;
+				}
+				if(!vm_copy_claim_page(dst, upage, src_page->frame->kva, writable)) {
+					return false;
+				}
+			}
+		}
+		return true;
 }
 
 /* Free the resource hold by the supplemental page table */
+// spt의 모든 자원들을 free한다 -> process가 exit할 때 process_exit()에서 호출된다.
 void
 supplemental_page_table_kill (struct supplemental_page_table *spt UNUSED) {
 	/* TODO: Destroy all the supplemental_page_table hold by thread and
 	 * TODO: writeback all the modified contents to the storage. */
+
+	// 해시테이블 요소를 모두 지우고, 메모리를 해제한다.
+	hash_clear(&spt->sptHash, hash_page_destroy);
+}
+
+/** Project 3-Anonymous Page */
+// hash table 요소에 대해 메모리 해제하는 함수
+void 
+hash_page_destroy(struct hash_elem *e, void *aux)
+{
+    struct page *page = hash_entry(e, struct page, hash_elem);
+	// 페이지 구조체에 대한 추가적인 정리 작업들
+    destroy(page);
+	// 페이지 구조체 메모리 해제
+    free(page);
 }

@@ -18,7 +18,9 @@
 
 void syscall_entry(void);
 void syscall_handler(struct intr_frame *);
-void check_address(void *addr);
+// void check_address(void *addr);
+struct page *check_address(void *addr);
+void check_valid_buffer(void *buffer, unsigned size, void *rsp, bool to_write);
 void halt(void);
 void exit(int status);
 bool create(const char *file, unsigned initial_size);
@@ -78,7 +80,7 @@ syscall_handler (struct intr_frame *f UNUSED) {
 	// TODO: Your implementation goes here.
 	//interrupt frame pointer의 stack pointer를 가져옴.
 	int syscall_num = f->R.rax; //syscall 넘버
-	// printf("%d\n", f->R.rax);
+	
 	switch (syscall_num)
 	{
 	case SYS_HALT:
@@ -109,9 +111,11 @@ syscall_handler (struct intr_frame *f UNUSED) {
 		f->R.rax = filesize(f->R.rdi);
 		break;
 	case SYS_READ:
+		check_valid_buffer(f->R.rsi, f->R.rdx, f->rsp, 1);
 		f->R.rax = read(f->R.rdi, f->R.rsi, f->R.rdx);
 		break;
 	case SYS_WRITE:
+		check_valid_buffer(f->R.rsi, f->R.rdx, f->rsp, 0);
 		f->R.rax = write(f->R.rdi, f->R.rsi, f->R.rdx);
 		break;
 	case SYS_SEEK:
@@ -163,13 +167,42 @@ remove(const char* file){
 	return filesys_remove(file);
 }
 
-void
-check_address(void *addr){
-	if(addr == NULL)exit(-1);
-	if(!is_user_vaddr(addr))exit(-1);
-	//pml4테이블을 이용해 가상주소를 찾을 때 없을 경우 exit
-	if(pml4_get_page(thread_current()->pml4, addr) == NULL)exit(-1);
+// void
+// check_address(void *addr){
+// 	if(addr == NULL)exit(-1);
+// 	if(!is_user_vaddr(addr))exit(-1);
+// 	//pml4테이블을 이용해 가상주소를 찾을 때 없을 경우 exit
+// 	if(pml4_get_page(thread_current()->pml4, addr) == NULL)exit(-1);
+// }
+
+struct page
+*check_address(void *addr) {
+	
+	// addr이 NULL이거나 커널주소라면 exit(-1)
+	if(addr == NULL || is_kernel_vaddr(addr)) {
+		exit(-1);
+	}
+	
+	return spt_find_page(&thread_current()->spt, addr);
 }
+
+
+void
+check_valid_buffer(void *buffer, unsigned size, void *rsp, bool to_write) {
+
+	// size까지 1씩 증가시키며 검사해도, check_address 안에서 pg_round_down으로 페이지 시작주소로 낮춰서 검사하기 때문에 괜찮다.
+	for(int i = 0; i < size; i++) {
+		struct page *page = check_address(buffer + i);
+
+		if(page == NULL) {
+			exit(-1);
+		}
+		if(to_write == true && page->writable == false) {
+			exit(-1);
+		}
+	}
+}
+
 
 int open(const char *file_name)
 {

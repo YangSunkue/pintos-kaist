@@ -7,7 +7,7 @@
 #include <stdint.h>
 #include "threads/interrupt.h"
 #ifdef VM
-#include "/pintos-kaist/include/vm/vm.h"
+#include "vm/vm.h"
 #endif
 
 
