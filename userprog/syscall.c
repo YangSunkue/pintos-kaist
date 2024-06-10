@@ -34,6 +34,8 @@ tid_t fork(const char *thread_name, struct intr_frame *f);
 int exec(const char *cmd_line);
 int wait(int pid);
 
+void *mmap(void *addr, size_t length, int writable, int fd, off_t offset);
+void munmap(void *addr);
 
 /* System call.
  *
@@ -44,42 +46,32 @@ int wait(int pid);
  * The syscall instruction works by reading the values from the the Model
  * Specific Register (MSR). For the details, see the manual. */
 
-#define MSR_STAR 0xc0000081         /* Segment selector msr */
-#define MSR_LSTAR 0xc0000082        /* Long mode SYSCALL target */
+#define MSR_STAR 0xc0000081			/* Segment selector msr */
+#define MSR_LSTAR 0xc0000082		/* Long mode SYSCALL target */
 #define MSR_SYSCALL_MASK 0xc0000084 /* Mask for the eflags */
 
-void
-syscall_init (void) {
-	/**
-	 * MSR_STAR: 'SEL_UCSEG'와 'SEL_KCSEG' 값을 설정
-	 * SEL_UCSEG: user code segment selector
-	 * SEL_KCSEG: kernel code segment selector
-	*/
-	write_msr(MSR_STAR, ((uint64_t)SEL_UCSEG - 0x10) << 48  | ((uint64_t)SEL_KCSEG) << 32);
-	write_msr(MSR_LSTAR, (uint64_t) syscall_entry);
+void syscall_init(void)
+{
+	write_msr(MSR_STAR, ((uint64_t)SEL_UCSEG - 0x10) << 48 |
+							((uint64_t)SEL_KCSEG) << 32);
+	write_msr(MSR_LSTAR, (uint64_t)syscall_entry);
 
 	/* The interrupt service rountine should not serve any interrupts
 	 * until the syscall_entry swaps the userland stack to the kernel
 	 * mode stack. Therefore, we masked the FLAG_FL. */
 	write_msr(MSR_SYSCALL_MASK,
-			FLAG_IF | FLAG_TF | FLAG_DF | FLAG_IOPL | FLAG_AC | FLAG_NT);
-
-	/**
-	 * filesys_lock? 파일 시스템에 대한 동시 접근을 제어하기 위해 사용.(race condition 방지)
-	*/
-	lock_init(&filesys_lock);//file system lock 초기화
+			  FLAG_IF | FLAG_TF | FLAG_DF | FLAG_IOPL | FLAG_AC | FLAG_NT);
+	lock_init(&filesys_lock);
 }
 
-/* The main system call interface 
-* rsp: stack pointer, rdi: 1st arugment, rsi: 2nd argument, rdx: 3rd argument
-*/
-void
-syscall_handler (struct intr_frame *f UNUSED) {
-	// TODO: Your implementation goes here.
-	//interrupt frame pointer의 stack pointer를 가져옴.
-	int syscall_num = f->R.rax; //syscall 넘버
-	// printf("%d\n", f->R.rax);
-	switch (syscall_num)
+/* The main system call interface */
+void syscall_handler(struct intr_frame *f UNUSED)
+{
+	int syscall_n = f->R.rax; /* 시스템 콜 넘버 */
+#ifdef VM
+	thread_current()->rsp = f->rsp;
+#endif
+	switch (syscall_n)
 	{
 	case SYS_HALT:
 		halt();
@@ -123,52 +115,51 @@ syscall_handler (struct intr_frame *f UNUSED) {
 	case SYS_CLOSE:
 		close(f->R.rdi);
 		break;
-	default:
-		exit(-1);//추가
+	case SYS_MMAP:
+		f->R.rax = mmap(f->R.rdi, f->R.rsi, f->R.rdx, f->R.r10, f->R.r8);
+		break;
+	case SYS_MUNMAP:
+		munmap(f->R.rdi);
 		break;
 	}
-	// thread_exit (); ㅏㅏㅏㅏㅏ,,,,미친
 }
 
-/*
-System call handler 함수
-*/
-//Pintos 종료시키는 syscall
-void
-halt(void){
+void check_address(void *addr)
+{
+	if (addr == NULL)
+		exit(-1);
+	if (!is_user_vaddr(addr))
+		exit(-1);
+	// if (pml4_get_page(thread_current()->pml4, addr) == NULL)
+	// 	exit(-1);
+}
+
+void halt(void)
+{
 	power_off();
 }
 
-//현재 프로세스를 종료시키는 syscall
-void
-exit(int status){
-	struct thread *cur = thread_current();
-	cur->exit_status = status; // exit status 저장
-	printf("%s: exit(%d)\n", cur->name, status);
+void exit(int status)
+{
+	struct thread *curr = thread_current();
+	curr->exit_status = status; 
+	printf("%s: exit(%d)\n", curr->name, status);
 	thread_exit();
 }
 
-// 파일을 생성하는 syscall. file: 생성할 파일. initial_size: 생성할 파일의 크기
-bool
-create(const char *file, unsigned initial_size){
+bool create(const char *file, unsigned initial_size)
+{
+	lock_acquire(&filesys_lock);
 	check_address(file);
-	return filesys_create(file, initial_size);
+	bool success = filesys_create(file, initial_size);
+	lock_release(&filesys_lock);
+	return success;
 }
 
-//file 이름에 해당하는 파일 지우기
-bool
-remove(const char* file){
+bool remove(const char *file)
+{
 	check_address(file);
-	if(file == NULL) exit(-1);
 	return filesys_remove(file);
-}
-
-void
-check_address(void *addr){
-	if(addr == NULL)exit(-1);
-	if(!is_user_vaddr(addr))exit(-1);
-	//pml4테이블을 이용해 가상주소를 찾을 때 없을 경우 exit
-	if(pml4_get_page(thread_current()->pml4, addr) == NULL)exit(-1);
 }
 
 int open(const char *file_name)
@@ -227,8 +218,8 @@ int read(int fd, void *buffer, unsigned size)
 	char *ptr = (char *)buffer;
 	int bytes_read = 0;
 
-	lock_acquire(&filesys_lock);//file system lock 획득
-	if (fd == 0)
+	lock_acquire(&filesys_lock);
+	if (fd == STDIN_FILENO)
 	{
 		for (int i = 0; i < size; i++)
 		{
@@ -236,12 +227,12 @@ int read(int fd, void *buffer, unsigned size)
 			bytes_read++;
 		}
 		lock_release(&filesys_lock);
-		return size;
 	}
 	else
 	{
 		if (fd < 2)
 		{
+
 			lock_release(&filesys_lock);
 			return -1;
 		}
@@ -252,24 +243,26 @@ int read(int fd, void *buffer, unsigned size)
 			lock_release(&filesys_lock);
 			return -1;
 		}
-		
+		struct page *page = spt_find_page(&thread_current()->spt, buffer);
+		if (page && !page->writable)
+		{
+			lock_release(&filesys_lock);
+			exit(-1);
+		}
 		bytes_read = file_read(file, buffer, size);
 		lock_release(&filesys_lock);
 	}
 	return bytes_read;
 }
 
-
-
 int write(int fd, const void *buffer, unsigned size)
 {
 	check_address(buffer);
-	int bytes_write = 0;//
-	if (fd == 1)
+	int bytes_write = 0;
+	if (fd == STDOUT_FILENO)
 	{
 		putbuf(buffer, size);
 		bytes_write = size;
-		return size;
 	}
 	else
 	{
@@ -285,17 +278,13 @@ int write(int fd, const void *buffer, unsigned size)
 	return bytes_write;
 }
 
-//부모 프로세스, 자식 프로세스 모두에서 호출. 부모 프로세스는 자식pid 반환, 자식은 0을 반환.
 tid_t fork(const char *thread_name, struct intr_frame *f)
 {
 	return process_fork(thread_name, f);
 }
 
-//logic: 부모 프로세스가 fork를 호출, 자식 프로세스를 생성.
-//자식은 fork()의 반환값을 검사, 자식에서 exec를 호출해 새로운 프로그램을 실행.
 int exec(const char *cmd_line)
 {
-	// *cmd_line 의 유효성 검사
 	check_address(cmd_line);
 
 	// process.c 파일의 process_create_initd 함수와 유사하다.
@@ -304,24 +293,48 @@ int exec(const char *cmd_line)
 
 	// process_exec 함수 안에서 filename을 변경해야 하므로
 	// 커널 메모리 공간에 cmd_line의 복사본을 만든다.
-	// 현재 const char* 타입이기 때문에 수정할 수 없음. -> char* 타입으로 변경.
-	char *cmd_line_cpy;
-	cmd_line_cpy = palloc_get_page(0);
-	if (cmd_line_cpy == NULL)
+	// (현재는 const char* 형식이기 때문에 수정할 수 없다.)
+	char *cmd_line_copy;
+	cmd_line_copy = palloc_get_page(0);
+	if (cmd_line_copy == NULL)
 		exit(-1);							  // 메모리 할당 실패 시 status -1로 종료한다.
-	strlcpy(cmd_line_cpy, cmd_line, PGSIZE); // cmd_line을 복사한다.
+	strlcpy(cmd_line_copy, cmd_line, PGSIZE); // cmd_line을 복사한다.
 
 	// 스레드의 이름을 변경하지 않고 바로 실행한다.
-	if (process_exec(cmd_line_cpy) == -1)
+	if (process_exec(cmd_line_copy) == -1)
 		exit(-1); // 실패 시 status -1로 종료한다.
 }
 
 int wait(int pid)
 {
-/* 
- * thread 식별자 tid가 종료될 때까지 기다리고, exit status를 반환.
- * thread가 커널에 의해 종료되었을 경우 -1 반환. 
- * TID가 유효하지 않거나,thread가 자식 스레드가 아니거나, 해당하는 tid에 대해 process_wait()가 호출되었으면 즉시 -1 반환
- */
 	return process_wait(pid);
+}
+
+void *mmap(void *addr, size_t length, int writable, int fd, off_t offset)
+{
+	if (!addr || addr != pg_round_down(addr))
+		return NULL;
+
+	if (offset != pg_round_down(offset))
+		return NULL;
+
+	if (!is_user_vaddr(addr) || !is_user_vaddr(addr + length))
+		return NULL;
+
+	if (spt_find_page(&thread_current()->spt, addr))
+		return NULL;
+
+	struct file *f = process_get_file(fd);
+	if (f == NULL)
+		return NULL;
+
+	if (file_length(f) == 0 || (int)length <= 0)
+		return NULL;
+
+	return do_mmap(addr, length, writable, f, offset); // 파일이 매핑된 가상 주소 반환
+}
+
+void munmap(void *addr)
+{
+	do_munmap(addr);
 }
