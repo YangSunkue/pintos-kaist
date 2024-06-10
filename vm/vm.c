@@ -81,7 +81,6 @@ bool vm_alloc_page_with_initializer(enum vm_type type, void *upage, bool writabl
 		// uninit_new를 호출해 "uninit" 페이지 구조체를 생성하세요.
 		uninit_new(p, upage, init, type, aux, page_initializer);
 		// uninit_new를 호출한 후에는 필드를 수정해야 합니다.
-		// 🚨 Todo : 뭘 수정해야 하지?
 		p->writable = writable;
 
 		/* TODO: Insert the page into the spt. */
@@ -227,7 +226,8 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED,
 	if (addr == NULL)
 		return false;
 
-	if (is_kernel_vaddr(addr))
+	// userSpace의 page fault 여야 함
+	if (is_kernel_vaddr(addr)) 
 		return false;
 
 	if (not_present) // 접근한 메모리의 physical page가 존재하지 않은 경우

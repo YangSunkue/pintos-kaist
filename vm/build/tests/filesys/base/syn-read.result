@@ -1,13 +1,17 @@
 FAIL
 Kernel panic in run: PANIC at ../../lib/kernel/list.c:78 in list_next(): assertion `is_head (elem) || is_interior (elem)' failed.
-Call stack: 0x8004218550 0x80042187cc 0x80042198e3 0x800420aac8 0x800421da04 0x800421d6e4 0x800421d497 0x4001ce 0x400f8a
+Call stack: 0x8004218550 0x80042187cc 0x8004208194 0x800420ace6 0x8004213cad 0x80042202a2 0x800421f8f0 0x800421e4db 0x800421c648 0x800421c029 0x800421df0d 0x800421d63d 0x800421d497
 Translation of call stack:
 0x0000008004218550: debug_panic (lib/kernel/debug.c:32)
 0x00000080042187cc: list_next (lib/kernel/list.c:79)
-0x00000080042198e3: list_insert_ordered (lib/kernel/list.c:427 (discriminator 2))
-0x000000800420aac8: lock_acquire (threads/synch.c:215)
-0x000000800421da04: open (userprog/syscall.c:169)
-0x000000800421d6e4: syscall_handler (userprog/syscall.c:98)
+0x0000008004208194: remove_with_lock (threads/thread.c:762 (discriminator 2))
+0x000000800420ace6: lock_release (threads/synch.c:263)
+0x0000008004213cad: disk_read (devices/disk.c:227)
+0x00000080042202a2: inode_open (filesys/inode.c:129)
+0x000000800421f8f0: dir_open_root (filesys/directory.c:49)
+0x000000800421e4db: filesys_open (filesys/filesys.c:82)
+0x000000800421c648: load (userprog/process.c:500)
+0x000000800421c029: process_exec (userprog/process.c:262)
+0x000000800421df0d: exec (userprog/syscall.c:358)
+0x000000800421d63d: syscall_handler (userprog/syscall.c:109)
 0x000000800421d497: no_sti (userprog/syscall-entry.o:?)
-0x00000000004001ce: (unknown)
-0x0000000000400f8a: (unknown)
