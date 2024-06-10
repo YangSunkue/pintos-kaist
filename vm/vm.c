@@ -62,7 +62,6 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 	// vm_initializer *init : 페이지를 초기화할 때 사용할 초기화 함수 포인터. type에 따라 다르게 동작하며 page fault시에 호출된다.
 	// aux라는 추가 인자를 받아서 초기화 작업을 수행한다.
 	// swap_in 핸들러가 초기화 함수를 호출하게 된다.
-
 	ASSERT (VM_TYPE(type) != VM_UNINIT)
 
 	struct supplemental_page_table *spt = &thread_current ()->spt;
@@ -100,8 +99,8 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 		// 위 정보들로 uninit page 형태로 초기화한다.
 
 		// init : 기본적인 페이지 구조 초기화
-		// aux : 페이지 초기화 시 필요한 추가정보들
-		// page_initializer : anon, file-backed에 따른 부분들 초기화
+		// aux : init에서 페이지 초기화 시 필요한 추가정보들
+		// page_initializer : anon, file-backed에 따른 부분들 초기화할 함수
 		uninit_new(page, upage, init, type, aux, page_initializer);
 		// 쓰기가능여부도 설정해 준다.
 		page->writable = writable;
@@ -124,21 +123,22 @@ err:
 struct page *
 spt_find_page (struct supplemental_page_table *spt UNUSED, void *va UNUSED) {
 
-	// 결과 페이지를 담을 변수
-	struct page *page = NULL;
+	// hash_find로 전달할 page
+	struct page page;
+	page.va = pg_round_down(va);
+
+	// hash_find로 전달할 hash_elem
 	struct hash_elem *e;
 
-	// hash_find 인자로써 들어갈 page
-	struct page va_compare_page;
-	va_compare_page.va = pg_round_down(va);
-
 	// va에 해당하는 페이지를 찾았다면 page 변수에 할당하고 return
-	if(e = hash_find(&spt->sptHash, &va_compare_page.hash_elem) != NULL) {
-		page = hash_entry(e, struct page, hash_elem);
+	if((e = hash_find(&spt->sptHash, &page.hash_elem)) != NULL) {
+		return hash_entry(e, struct page, hash_elem);
 	}
-
-	return page;
+	else {
+		return NULL;
+	}
 }
+
 
 /* Insert PAGE into spt with validation. */
 // spt에 page를 삽입하는 함수
@@ -228,16 +228,73 @@ vm_handle_wp (struct page *page UNUSED) {
 
 /* Return true on success */
 // exception.c의 page_fault()에 의해 호출되는 함수
+// page fault를 처리하려고 시도한다
+// 인터럽트프레임, fault 일으킨 주소, 사용자모드여부, 쓰기접근여부, 페이지가 메모리에 올라와있는지 여부
 bool
 vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
 		bool user UNUSED, bool write UNUSED, bool not_present UNUSED) {
+
 	struct supplemental_page_table *spt UNUSED = &thread_current ()->spt;
 	struct page *page = NULL;
 	/* TODO: Validate the fault */
 	/* TODO: Your code goes here */
+	// bogus fault라면 false를 return하나?
 
-	return vm_do_claim_page (page);
+	// fault 일으킨 주소가 NULL이라면 false 리턴
+	if(addr == NULL) {
+		return false;
+	}
+
+	// fault 일으킨 주소가 커널주소라면 false 리턴
+	if(is_kernel_vaddr(addr)) {
+		return false;
+	}
+	// 여기서 걸린다1
+
+	// fault 일으킨 가상 주소의 프레임이 존재하지 않는다면 claim으로 할당해주기
+	if(not_present) {
+		
+		//rsp 담을 변수
+		void *rsp;
+
+		// 유저 모드에서 발생한 page fault일 경우
+		if(user) {
+			rsp = f->rsp;	
+		}
+		// 커널 모드에서 발생한 page fault일 경우
+		else {
+			rsp = thread_current()->rsp;
+		}
+
+		// 스택 확장으로 처리할 수 있는 경우
+		// 즉 스택이 확장되어야 하는 상황을 의미한다
+		if ((USER_STACK - (1 << 20) <= rsp - 8 && rsp - 8 == addr && addr <= USER_STACK) || (USER_STACK - (1 << 20) <= rsp && rsp <= addr && addr <= USER_STACK)) {
+
+			// 조건문 이해 못했다. 이해해야 함.
+			vm_stack_growth(addr);
+		}
+
+
+		// spt에서 addr에 해당하는 페이지 찾기
+		page = spt_find_page(spt, addr);
+		// 여기서 걸린다2
+		if(page == NULL) {
+
+			// 못찾았으면 false 리턴
+			return false;
+		}
+		if(write == 1 && page->writable == 0) {
+
+			// write 불가능한 페이지에 write 요청한 경우 false 리턴
+			return false;
+		}
+		return vm_do_claim_page (page);
+	}
+
+	// fault 일으킨 가상 주소에 이미 프레임이 존재한다면 false 리턴
+	return false;
 }
+
 
 /* Free the page.
  * DO NOT MODIFY THIS FUNCTION. */
@@ -252,7 +309,7 @@ vm_dealloc_page (struct page *page) {
 // 그 페이지를 프레임에 할당한다.
 bool
 vm_claim_page (void *va UNUSED) {
-
+	
 	struct page *page = NULL;
 	struct thread *cur = thread_current();
 
@@ -282,7 +339,7 @@ vm_do_claim_page (struct page *page) {
 	// 프레임과 페이지를 서로 연결한다.
 	frame->page = page;
 	page->frame = frame;
-
+	
 	/* TODO: Insert page table entry to map page's VA to frame's PA. */
 	// 페이지의 VA를 프레임의 PA로 매핑하는 PTE를 삽입해야 한다.
 	// VA를 PA로 매핑하는 로직을 추가해야 함.
