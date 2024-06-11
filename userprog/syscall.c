@@ -20,12 +20,12 @@ void syscall_entry(void);
 void syscall_handler(struct intr_frame *);
 
 // Project 3 - Anonymous Page
-#ifndef VM
+// #ifndef VM
 	void check_address(void *addr);
-#else
+// #else
 /** #Project 3: Anonymous Page */
-	struct page *check_address(void *addr);
-#endif
+// 	struct page *check_address(void *addr);
+// #endif
 
 void halt(void);
 void exit(int status);
@@ -172,8 +172,14 @@ exit(int status){
 // 파일을 생성하는 syscall. file: 생성할 파일. initial_size: 생성할 파일의 크기
 bool
 create(const char *file, unsigned initial_size){
+	lock_acquire(&filesys_lock); // 추가한 부분
 	check_address(file);
-	return filesys_create(file, initial_size);
+	// critical section: filesys_create(file, initial_size)
+	bool succ = filesys_create(file, initial_size); 
+	// critical section 전에 lock을 획득, 후에 해제함으로써 mutual exclusion 방지
+	lock_release(&filesys_lock); 
+	return succ;
+	// return filesys_create(file, initial_size);
 }
 
 //file 이름에 해당하는 파일 지우기
@@ -184,7 +190,7 @@ remove(const char* file){
 	return filesys_remove(file);
 }
 
-# ifndef VM
+// # ifndef VM
 void
 check_address(void *addr){
 	if(addr == NULL)exit(-1);
@@ -192,36 +198,19 @@ check_address(void *addr){
 	//pml4테이블을 이용해 가상주소를 찾을 때 없을 경우 exit
 	// if(pml4_get_page(thread_current()->pml4, addr) == NULL)exit(-1);
 }
-#else
-/** Project 3-Anonymous Page */
-struct page *check_address(void *addr) {
-    struct thread *curr = thread_current();
-
-    if (is_kernel_vaddr(addr) || addr == NULL){
-        exit(-1);
-	}
-	if (!spt_find_page(&curr->spt, addr)){
-		exit(-1);
-	}
-
-    return spt_find_page(&curr->spt, addr);
-}
-#endif
-
 
 int open(const char *file_name)
 {
 	check_address(file_name);
 	lock_acquire(&filesys_lock);
-	struct file *file = filesys_open(file_name);
+	struct file *file = filesys_open(file_name); //critical section
 	if (file == NULL)
 	{
 		lock_release(&filesys_lock);
 		return -1;
 	}
 	int fd = process_add_file(file);
-	if (fd == -1)
-		file_close(file);
+	if (fd == -1) file_close(file);
 	lock_release(&filesys_lock);
 	return fd;
 }
@@ -229,24 +218,21 @@ int open(const char *file_name)
 int filesize(int fd)
 {
 	struct file *file = process_get_file(fd);
-	if (file == NULL)
-		return -1;
+	if (file == NULL) return -1;
 	return file_length(file);
 }
 
 void seek(int fd, unsigned position)
 {
 	struct file *file = process_get_file(fd);
-	if (file == NULL)
-		return;
+	if (file == NULL) return;
 	file_seek(file, position);
 }
 
 unsigned tell(int fd)
 {
 	struct file *file = process_get_file(fd);
-	if (file == NULL)
-		return;
+	if (file == NULL) return;
 	return file_tell(file);
 }
 
@@ -266,7 +252,7 @@ int read(int fd, void *buffer, unsigned size)
 	int bytes_read = 0;
 
 	lock_acquire(&filesys_lock);
-	if (fd == STDIN_FILENO)
+	if (fd == 0)
 	{
 		for (int i = 0; i < size; i++)
 		{
@@ -291,6 +277,7 @@ int read(int fd, void *buffer, unsigned size)
 			return -1;
 		}
 		struct page *page = spt_find_page(&thread_current()->spt, buffer);
+		// page가 존재하고, page가 writable이 아닌 경우
 		if (page && !page->writable)
 		{
 			lock_release(&filesys_lock);
@@ -307,7 +294,7 @@ int read(int fd, void *buffer, unsigned size)
 int write(int fd, const void *buffer, unsigned size)
 {
 	check_address(buffer);
-	int bytes_write = 0;//
+	int bytes_write = 0; // write한 바이트 수를 저장할 변수
 	if (fd == 1)
 	{
 		putbuf(buffer, size);
@@ -319,8 +306,7 @@ int write(int fd, const void *buffer, unsigned size)
 		if (fd < 2)
 			return -1;
 		struct file *file = process_get_file(fd);
-		if (file == NULL)
-			return -1;
+		if (file == NULL) return -1;
 		lock_acquire(&filesys_lock);
 		bytes_write = file_write(file, buffer, size);
 		lock_release(&filesys_lock);
@@ -371,6 +357,7 @@ int wait(int pid)
 
 void *mmap(void *addr, size_t length, int writable, int fd, off_t offset)
 {
+	// addr, length, offset의 유효성 검사
 	if (!addr || addr != pg_round_down(addr))
 		return NULL;
 
@@ -383,7 +370,7 @@ void *mmap(void *addr, size_t length, int writable, int fd, off_t offset)
 	if (spt_find_page(&thread_current()->spt, addr))
 		return NULL;
 
-	struct file *f = process_get_file(fd);
+	struct file *f = process_get_file(fd); // 파일 디스크립터로부터 파일을 가져옴
 	if (f == NULL)
 		return NULL;
 

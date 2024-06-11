@@ -74,4 +74,5 @@ uninit_destroy(struct page *page)
 	 * TODO: If you don't have anything to do, just return. */
 	// page struct에 의해 유지되고 있던 리소스를 해제합니다.
 	// 페이지의 vm 유형을 확인하고 그에 맞게 처리하는 것이 좋습니다.
+
 }

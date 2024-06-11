@@ -1,16 +1,24 @@
 FAIL
 Kernel panic in run: PANIC at ../../lib/kernel/list.c:78 in list_next(): assertion `is_head (elem) || is_interior (elem)' failed.
-Call stack: 0x8004218550 0x80042187cc 0x8004208194 0x800420ace6 0x8004213e5a 0x800422068c 0x800421f568 0x800421de40 0x800421d786 0x800421d497 0x40028d 0x400d24
+Call stack: 0x8004218550 0x80042187cc 0x8004208194 0x800420ace6 0x80042225ce 0x8004221f07 0x800421ab1e 0x8004221ec4 0x800421c2b6 0x800421c232 0x800420751c 0x800421d8e1 0x800421d5f5 0x800421d497 0x400c7f 0x40048d 0x4007f7 0x400107 0x401504 0x40154d
 Translation of call stack:
 0x0000008004218550: debug_panic (lib/kernel/debug.c:32)
 0x00000080042187cc: list_next (lib/kernel/list.c:79)
 0x0000008004208194: remove_with_lock (threads/thread.c:762 (discriminator 2))
 0x000000800420ace6: lock_release (threads/synch.c:263)
-0x0000008004213e5a: disk_write (devices/disk.c:251)
-0x000000800422068c: inode_write_at (filesys/inode.c:260)
-0x000000800421f568: file_write (filesys/file.c:98)
-0x000000800421de40: write (userprog/syscall.c:325)
-0x000000800421d786: syscall_handler (userprog/syscall.c:130)
+0x00000080042225ce: anon_destroy (vm/anon.c:137)
+0x0000008004221f07: hash_page_destroy (vm/vm.c:400)
+0x000000800421ab1e: hash_clear (lib/kernel/hash.c:58)
+0x0000008004221ec4: supplemental_page_table_kill (vm/vm.c:394)
+0x000000800421c2b6: process_cleanup (userprog/process.c:352)
+0x000000800421c232: process_exit (userprog/process.c:332)
+0x000000800420751c: thread_exit (threads/thread.c:395)
+0x000000800421d8e1: create (userprog/syscall.c:174)
+0x000000800421d5f5: syscall_handler (userprog/syscall.c:106)
 0x000000800421d497: no_sti (userprog/syscall-entry.o:?)
-0x000000000040028d: (unknown)
-0x0000000000400d24: (unknown)
+0x0000000000400c7f: (unknown)
+0x000000000040048d: (unknown)
+0x00000000004007f7: (unknown)
+0x0000000000400107: (unknown)
+0x0000000000401504: (unknown)
+0x000000000040154d: (unknown)

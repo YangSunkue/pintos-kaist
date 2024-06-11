@@ -150,8 +150,7 @@ void do_munmap(void *addr)
 	int count = p->mapped_page_count;
 	for (int i = 0; i < count; i++)
 	{
-		if (p)
-			destroy(p);
+		if (p) destroy(p);
 		// {
 		// 	if (pml4_get_page(thread_current()->pml4, p->va))
 		// 		// 매핑된 프레임이 있다면 = swap out 되지 않았다면 -> 페이지를 제거하고 연결된 프레임도 제거

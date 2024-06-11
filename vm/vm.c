@@ -390,7 +390,6 @@ void supplemental_page_table_kill(struct supplemental_page_table *spt UNUSED)
 	 * 따라서, hash의 요소들만 제거하는 hash_clear를 사용해야 한다.
 	 */
 
-	// todo🚨: 모든 수정된 내용을 스토리지에 기록
 }
 
 void hash_page_destroy(struct hash_elem *e, void *aux)
