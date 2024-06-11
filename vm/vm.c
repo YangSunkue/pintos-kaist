@@ -217,8 +217,25 @@ vm_get_frame (void) {
 }
 
 /* Growing the stack. */
+// 하나 이상의 anonymous 페이지를 할당하여 스택 크기 늘리기
+// addr은 faulted주소에서 유효한 주소가 된다
 static void
 vm_stack_growth (void *addr UNUSED) {
+
+	bool success = false;
+
+	// offset을 제외한 페이지 주소 얻기
+	addr = pg_round_down(addr);
+
+	// 페이지 할당받기 + spt에 넣기
+	if(vm_alloc_page(VM_ANON | VM_MARKER_0, addr, true)) {
+		// 물리메모리와 매핑하기 + page table에 추가
+		success = vm_claim_page(addr);
+	}
+	if(success) {
+		thread_current()->stack_bottom -=  PGSIZE;
+	}
+
 }
 
 /* Handle the fault on write_protected page */
@@ -230,69 +247,99 @@ vm_handle_wp (struct page *page UNUSED) {
 // exception.c의 page_fault()에 의해 호출되는 함수
 // page fault를 처리하려고 시도한다
 // 인터럽트프레임, fault 일으킨 주소, 사용자모드여부, 쓰기접근여부, 페이지가 메모리에 올라와있는지 여부
+// bool
+// vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
+// 		bool user UNUSED, bool write UNUSED, bool not_present UNUSED) {
+
+// 	struct supplemental_page_table *spt UNUSED = &thread_current ()->spt;
+// 	struct page *page = NULL;
+// 	/* TODO: Validate the fault */
+// 	/* TODO: Your code goes here */
+// 	// bogus fault라면 false를 return하나?
+
+// 	// fault 일으킨 주소가 NULL이라면 false 리턴
+// 	if(addr == NULL) {
+// 		return false;
+// 	}
+
+// 	// fault 일으킨 주소가 커널주소라면 false 리턴
+// 	if(is_kernel_vaddr(addr)) {
+// 		return false;
+// 	}
+// 	// 여기서 걸린다1
+
+// 	// fault 일으킨 가상 주소의 프레임이 존재하지 않는다면 claim으로 할당해주기
+// 	if(not_present) {
+		
+// 		//rsp 담을 변수
+// 		void *rsp;
+
+// 		// 유저 모드에서 발생한 page fault일 경우
+// 		if(user) {
+// 			rsp = f->rsp;	
+// 		}
+// 		// 커널 모드에서 발생한 page fault일 경우
+// 		else {
+// 			rsp = thread_current()->rsp;
+// 		}
+
+// 		// 스택 확장으로 처리할 수 있는 경우
+// 		// 즉 스택이 확장되어야 하는 상황을 의미한다
+// 		if ((USER_STACK - (1 << 20) <= rsp - 8 && rsp - 8 == addr && addr <= USER_STACK) || (USER_STACK - (1 << 20) <= rsp && rsp <= addr && addr <= USER_STACK)) {
+
+// 			// 조건문 이해 못했다. 이해해야 함.
+// 			vm_stack_growth(addr);
+// 		}
+
+
+// 		// spt에서 addr에 해당하는 페이지 찾기
+// 		page = spt_find_page(spt, addr);
+// 		// 여기서 걸린다2
+// 		if(page == NULL) {
+
+// 			// 못찾았으면 false 리턴
+// 			return false;
+// 		}
+// 		if(write == 1 && page->writable == 0) {
+
+// 			// write 불가능한 페이지에 write 요청한 경우 false 리턴
+// 			return false;
+// 		}
+// 		return vm_do_claim_page (page);
+// 	}
+
+// 	// fault 일으킨 가상 주소에 이미 프레임이 존재한다면 false 리턴
+// 	return false;
+// }
+
 bool
 vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
 		bool user UNUSED, bool write UNUSED, bool not_present UNUSED) {
+			
+    struct supplemental_page_table *spt UNUSED = &thread_current()->spt;
+	/** Project 3-Copy On Write */
+    struct page *page = spt_find_page(&thread_current()->spt, addr);
 
-	struct supplemental_page_table *spt UNUSED = &thread_current ()->spt;
-	struct page *page = NULL;
-	/* TODO: Validate the fault */
-	/* TODO: Your code goes here */
-	// bogus fault라면 false를 return하나?
+    if (addr == NULL || is_kernel_vaddr(addr))
+        return false;
 
-	// fault 일으킨 주소가 NULL이라면 false 리턴
-	if(addr == NULL) {
-		return false;
-	}
+    if (!not_present && write)
+        return vm_handle_wp(page);
 
-	// fault 일으킨 주소가 커널주소라면 false 리턴
-	if(is_kernel_vaddr(addr)) {
-		return false;
-	}
-	// 여기서 걸린다1
-
-	// fault 일으킨 가상 주소의 프레임이 존재하지 않는다면 claim으로 할당해주기
-	if(not_present) {
-		
-		//rsp 담을 변수
-		void *rsp;
-
-		// 유저 모드에서 발생한 page fault일 경우
-		if(user) {
-			rsp = f->rsp;	
+    if (!page) {
+        void *rsp = user ? f->rsp : thread_current()->rsp;
+		if (STACK_LIMIT <= rsp - 8 && rsp - 8 == addr && addr <= USER_STACK){
+			vm_stack_growth(thread_current()->stack_bottom - PGSIZE);
+			return true;
 		}
-		// 커널 모드에서 발생한 page fault일 경우
-		else {
-			rsp = thread_current()->rsp;
+		else if (STACK_LIMIT <= rsp && rsp <= addr && addr <= USER_STACK){
+			vm_stack_growth(thread_current()->stack_bottom - PGSIZE);
+			return true;
 		}
+        return false;
+    }
 
-		// 스택 확장으로 처리할 수 있는 경우
-		// 즉 스택이 확장되어야 하는 상황을 의미한다
-		if ((USER_STACK - (1 << 20) <= rsp - 8 && rsp - 8 == addr && addr <= USER_STACK) || (USER_STACK - (1 << 20) <= rsp && rsp <= addr && addr <= USER_STACK)) {
-
-			// 조건문 이해 못했다. 이해해야 함.
-			vm_stack_growth(addr);
-		}
-
-
-		// spt에서 addr에 해당하는 페이지 찾기
-		page = spt_find_page(spt, addr);
-		// 여기서 걸린다2
-		if(page == NULL) {
-
-			// 못찾았으면 false 리턴
-			return false;
-		}
-		if(write == 1 && page->writable == 0) {
-
-			// write 불가능한 페이지에 write 요청한 경우 false 리턴
-			return false;
-		}
-		return vm_do_claim_page (page);
-	}
-
-	// fault 일으킨 가상 주소에 이미 프레임이 존재한다면 false 리턴
-	return false;
+    return vm_do_claim_page(page);  
 }
 
 
