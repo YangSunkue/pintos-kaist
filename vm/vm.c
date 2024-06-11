@@ -160,6 +160,9 @@ spt_insert_page (struct supplemental_page_table *spt UNUSED, struct page *page U
 
 void
 spt_remove_page (struct supplemental_page_table *spt, struct page *page) {
+
+	// spt에서 
+	hash_delete(&spt->sptHash, &page->hash_elem);
 	vm_dealloc_page (page);
 	return true;
 }
@@ -486,11 +489,11 @@ supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
 				}
 
 				// spt에서 찾아서 file-backed로 초기화하기.
-				struct page *dst_page = spt_find_page(dst, upage);
-				file_backed_initializer(dst_page, type, NULL);    // kva를 NULL로 준 후 frame을 통째로 복사한다.
-				dst_page->frame = src_page->frame;
+				struct page *file_page = spt_find_page(dst, upage);
+				file_backed_initializer(file_page, type, NULL);    // kva를 NULL로 준 후 frame을 통째로 복사한다.
+				file_page->frame = src_page->frame;
 				// 현재 스레드 page table에 넣기
-				pml4_set_page(thread_current()->pml4, dst_page->va, src_page->frame->kva, src_page->writable);
+				pml4_set_page(thread_current()->pml4, file_page->va, src_page->frame->kva, src_page->writable);
 			}
 
 			// Anonymous page일 경우
@@ -498,10 +501,14 @@ supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
 				if(!vm_alloc_page(type, upage, writable)) {
 					return false;
 				}
-				if(!vm_copy_claim_page(dst, upage, src_page->frame->kva, writable)) {
+				if (!vm_claim_page(upage)){
 					return false;
 				}
 			}
+			
+			// 매핑된 프레임에 내용 로딩
+			struct page *dst_page = spt_find_page(dst, upage);
+			memcpy(dst_page->frame->kva, src_page->frame->kva, PGSIZE);
 		}
 		return true;
 }
