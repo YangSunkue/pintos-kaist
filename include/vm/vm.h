@@ -2,7 +2,7 @@
 #define VM_VM_H
 #include <stdbool.h>
 #include "threads/palloc.h"
-#include "hash.h"
+#include <hash.h>
 
 enum vm_type
 {
@@ -151,10 +151,14 @@ enum vm_type page_get_type(struct page *page);
 void hash_page_destroy(struct hash_elem *e, void *aux);
 
 struct list swap_table;
-struct list frame_table;
+// struct list frame_table;
 struct lock swap_table_lock;
 struct lock frame_table_lock;
 
-
+// 추가
 static bool vm_copy_claim_page(struct supplemental_page_table *dst, void *va, void *kva, bool writable);
+bool page_less(const struct hash_elem *a, const struct hash_elem *b, void *aux);
+
+// 스택 가장 작은쪽 주소
+#define STACK_LIMIT (USER_STACK - (1 << 20))
 #endif /* VM_VM_H */

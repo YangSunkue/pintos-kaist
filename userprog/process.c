@@ -742,7 +742,7 @@ install_page (void *upage, void *kpage, bool writable) {
 
 // page fault가 발생했을 때 lazy load하는 함수
 // 디스크에서 메모리로 데이터를 load한다
-static bool
+bool
 lazy_load_segment (struct page *page, void *aux) {
 	/* TODO: Load the segment from the file */
 	/* TODO: This called when the first page fault occurs on address VA. */
@@ -866,6 +866,7 @@ setup_stack (struct intr_frame *if_) {
 			// rsp 변경해주기
 			// 사용할 수 있는 페이지+메모리 할당했으니, USER_STACK부분부터 최대 stack_bottom 위치까지 rsp를 줄이면서 메모리에 값을 쓸 수 있다.
 			if_->rsp = USER_STACK;
+			thread_current()->stack_bottom = stack_bottom;
 		}
 	}
 

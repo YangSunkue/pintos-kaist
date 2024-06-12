@@ -26,6 +26,8 @@ struct file *process_get_file(int fd);
 void process_close_file(int fd);
 struct thread *get_child_process(int pid);
 
+bool lazy_load_segment (struct page *page, void *aux);
+
 // load_segment에서 lazy_load_segment로 전달할 데이터들
 struct lazyLoadArg {
     struct file *file;  // 읽어올 파일
@@ -33,4 +35,9 @@ struct lazyLoadArg {
     uint32_t readBytes; // 읽어올 바이트
     uint32_t zeroBytes; // 0으로 채울 바이트 ( 읽어와서 페이지 단위로 메모리에 할당하고 남은 부분을 0으로 채움 )
 };
+
+#define STDIN 1
+#define STDOUT 2
+#define STDERR 3
+
 #endif /* userprog/process.h */

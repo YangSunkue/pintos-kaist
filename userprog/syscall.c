@@ -20,7 +20,7 @@ void syscall_entry(void);
 void syscall_handler(struct intr_frame *);
 // void check_address(void *addr);
 struct page *check_address(void *addr);
-void check_valid_buffer(void *buffer, unsigned size, void *rsp, bool to_write);
+
 void halt(void);
 void exit(int status);
 bool create(const char *file, unsigned initial_size);
@@ -78,7 +78,12 @@ syscall_init (void) {
 void
 syscall_handler (struct intr_frame *f UNUSED) {
 	// TODO: Your implementation goes here.
+
 	//interrupt frame pointer의 stack pointer를 가져옴.
+	#ifdef VM
+		thread_current()->rsp = f->rsp;
+	#endif
+
 	int syscall_num = f->R.rax; //syscall 넘버
 	
 	switch (syscall_num)
@@ -111,11 +116,9 @@ syscall_handler (struct intr_frame *f UNUSED) {
 		f->R.rax = filesize(f->R.rdi);
 		break;
 	case SYS_READ:
-		check_valid_buffer(f->R.rsi, f->R.rdx, f->rsp, 1);
 		f->R.rax = read(f->R.rdi, f->R.rsi, f->R.rdx);
 		break;
 	case SYS_WRITE:
-		check_valid_buffer(f->R.rsi, f->R.rdx, f->rsp, 0);
 		f->R.rax = write(f->R.rdi, f->R.rsi, f->R.rdx);
 		break;
 	case SYS_SEEK:
@@ -127,6 +130,16 @@ syscall_handler (struct intr_frame *f UNUSED) {
 	case SYS_CLOSE:
 		close(f->R.rdi);
 		break;
+
+// project 3 Memory Mapped Files
+#ifdef VM
+	case SYS_MMAP:
+		f->R.rax = mmap(f->R.rdi, f->R.rsi, f->R.rdx, f->R.r10, f->R.r8);
+		break;
+	case SYS_MUNMAP:
+		munmap(f->R.rdi);
+		break;
+#endif
 	default:
 		exit(-1);//추가
 		break;
@@ -156,7 +169,12 @@ exit(int status){
 bool
 create(const char *file, unsigned initial_size){
 	check_address(file);
-	return filesys_create(file, initial_size);
+
+	lock_acquire(&filesys_lock);
+	bool success = filesys_create(file, initial_size);
+	lock_release(&filesys_lock);
+
+	return success;
 }
 
 //file 이름에 해당하는 파일 지우기
@@ -164,7 +182,12 @@ bool
 remove(const char* file){
 	check_address(file);
 	if(file == NULL) exit(-1);
-	return filesys_remove(file);
+
+	lock_acquire(&filesys_lock);
+	bool success = filesys_remove(file);
+	lock_release(&filesys_lock);
+
+	return success;
 }
 
 // void
@@ -187,20 +210,31 @@ struct page
 }
 
 
-void
-check_valid_buffer(void *buffer, unsigned size, void *rsp, bool to_write) {
+// void
+// check_valid_buffer(void *buffer, unsigned size, void *rsp, bool to_write) {
 
-	// size까지 1씩 증가시키며 검사해도, check_address 안에서 pg_round_down으로 페이지 시작주소로 낮춰서 검사하기 때문에 괜찮다.
-	for(int i = 0; i < size; i++) {
-		struct page *page = check_address(buffer + i);
+// 	// size까지 1씩 증가시키며 검사해도, check_address 안에서 pg_round_down으로 페이지 시작주소로 낮춰서 검사하기 때문에 괜찮다.
+// 	for(int i = 0; i < size; i++) {
+// 		struct page *page = check_address(buffer + i);
 
-		if(page == NULL) {
-			exit(-1);
-		}
-		if(to_write == true && page->writable == false) {
-			exit(-1);
-		}
-	}
+// 		if(page == NULL) {
+// 			exit(-1);
+// 		}
+// 		if(to_write == true && page->writable == false) {
+// 			exit(-1);
+// 		}
+// 	}
+// }
+
+/** Project 3-Memory Mapped Files 버퍼 유효성 검사 */
+void check_valid_buffer(void *buffer, size_t size, bool writable) {
+    for (size_t i = 0; i < size; i += 8) {
+        /* buffer가 spt에 존재하는지 검사 */
+        struct page *page = check_address(buffer + i);
+
+        if (!page || (writable && !(page->writable)))
+            exit(-1);
+    }
 }
 
 
@@ -231,10 +265,14 @@ int filesize(int fd)
 
 void seek(int fd, unsigned position)
 {
+	lock_acquire(&filesys_lock);
+
 	struct file *file = process_get_file(fd);
 	if (file == NULL)
 		return;
 	file_seek(file, position);
+
+	lock_release(&filesys_lock);
 }
 
 unsigned tell(int fd)
@@ -242,7 +280,11 @@ unsigned tell(int fd)
 	struct file *file = process_get_file(fd);
 	if (file == NULL)
 		return;
-	return file_tell(file);
+	
+	lock_acquire(&filesys_lock);
+	off_t result = file_tell(file);
+	lock_release(&filesys_lock);
+	return result;
 }
 
 void close(int fd)
@@ -250,11 +292,19 @@ void close(int fd)
 	struct file *file = process_get_file(fd);
 	if (file == NULL)
 		return;
+	lock_acquire(&filesys_lock);
+
 	file_close(file);
 	process_close_file(fd);
+	
+	lock_release(&filesys_lock);
 }
 int read(int fd, void *buffer, unsigned size)
 {
+
+#ifdef VM
+    check_valid_buffer(buffer, size, true);
+#endif
 	check_address(buffer);
 
 	char *ptr = (char *)buffer;
@@ -296,8 +346,12 @@ int read(int fd, void *buffer, unsigned size)
 
 int write(int fd, const void *buffer, unsigned size)
 {
+
+#ifdef VM
+    check_valid_buffer(buffer, size, false);
+#endif
 	check_address(buffer);
-	int bytes_write = 0;//
+	int bytes_write = 0;
 	if (fd == 1)
 	{
 		putbuf(buffer, size);
@@ -358,3 +412,33 @@ int wait(int pid)
  */
 	return process_wait(pid);
 }
+
+/** Project 3-Memory Mapped FIles */
+#ifdef VM
+void *mmap(void *addr, size_t length, int writable, int fd, off_t offset) {
+    if (!addr || pg_round_down(addr) != addr || is_kernel_vaddr(addr) || is_kernel_vaddr(addr + length))
+        return NULL;
+
+    if (offset != pg_round_down(offset) || offset % PGSIZE != 0)
+        return NULL;
+
+    if (spt_find_page(&thread_current()->spt, addr))
+        return NULL;
+
+    struct file *file = process_get_file(fd);
+
+    if ((file >= STDIN && file <= STDERR) || file == NULL)
+        return NULL;
+
+    if (file_length(file) == 0 || (long)length <= 0)
+        return NULL;
+
+    return do_mmap(addr, length, writable, file, offset);
+}
+
+/** Project 3-Memory Mapped Files */
+void munmap(void *addr) {
+    do_munmap(addr);
+}
+
+#endif

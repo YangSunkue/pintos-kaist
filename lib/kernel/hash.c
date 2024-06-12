@@ -35,22 +35,10 @@ unsigned
 page_hash(const struct hash_elem *p_, void *aux UNUSED) {
 	
 	// hash_elem을 가진 page 가져오기
-	const struct page *p = hash_entry(p_, struct page, hash_elem);
+	struct page *p = hash_entry(p_, struct page, hash_elem);
 
 	// 페이지가 가진 VA를 해시하여 리턴한다
 	return hash_bytes(&p->va, sizeof p->va);
-}
-
-// hash_init의 3번째 인자로 들어갈 비교함수
-// 주어진 hash_elem 2개의 page VA를 비교하여, b가 크면 True 아니면 False를 리턴한다
-bool
-page_less(const struct hash_elem *a_, const struct hash_elem *b_, void *aux UNUSED) {
-
-	// hash elem a_ , b_ 에 대한 page 가져오기
-	const struct page *a = hash_entry(a_, struct page, hash_elem);
-	const struct page *b = hash_entry(b_, struct page, hash_elem);
-
-	return a->va < b->va;
 }
 
 
@@ -125,6 +113,8 @@ hash_destroy (struct hash *h, hash_action_func *destructor) {
    no equal element is already in the table.
    If an equal element is already in the table, returns it
    without inserting NEW. */
+// 똑같은거 이미 있으면 똑같은거 다시 반환
+// 없어서 추가했으면 NULL 반환
 struct hash_elem *
 hash_insert (struct hash *h, struct hash_elem *new) {
 	struct list *bucket = find_bucket (h, new);

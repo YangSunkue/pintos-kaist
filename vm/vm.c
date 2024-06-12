@@ -9,6 +9,8 @@
 #include "hash.h"
 #include "threads/vaddr.h"
 
+static struct list frame_table;  // project3 추가
+
 
 // 가상 메모리의 기본적인 인터페이스들 제공
 // 가상 메모리의 기본적인 인터페이스들 제공
@@ -28,6 +30,8 @@ vm_init (void) {
 	register_inspect_intr ();
 	/* DO NOT MODIFY UPPER LINES. */
 	/* TODO: Your code goes here. */
+	// project3 추가
+	list_init(&frame_table);
 }
 
 /* Get the type of the page. This function is useful if you want to know the
@@ -120,23 +124,41 @@ err:
 /* Find VA from spt and return page. On error, return NULL. */
 // spt에서 va에 해당하는 page를 찾아서 반환
 // 미완성이다 구현해야 한다!!!!!!!!!! -> 구현했따
+// struct page *
+// spt_find_page (struct supplemental_page_table *spt UNUSED, void *va UNUSED) {
+
+// 	// hash_find로 전달할 page
+// 	struct page page;
+// 	page.va = pg_round_down(va);
+
+// 	// hash_find로 전달할 hash_elem
+// 	struct hash_elem *e;
+
+// 	// va에 해당하는 페이지를 찾았다면 page 변수에 할당하고 return
+// 	if((e = hash_find(&spt->sptHash, &page.hash_elem)) != NULL) {
+// 		return hash_entry(e, struct page, hash_elem);
+// 	}
+// 	else {
+// 		return NULL;
+// 	}
+// }
+
 struct page *
 spt_find_page (struct supplemental_page_table *spt UNUSED, void *va UNUSED) {
 
+	/** Project 3-Memory Management */
 	// hash_find로 전달할 page
-	struct page page;
-	page.va = pg_round_down(va);
+	struct page *page = (struct page *)malloc(sizeof(struct page));     
+    page->va = pg_round_down(va);  
+	
+	// hash_find로 전달할 hash_elem                      
+    struct hash_elem *e = hash_find(&spt->sptHash, &page->hash_elem);  
 
-	// hash_find로 전달할 hash_elem
-	struct hash_elem *e;
+	// page free
+    free(page);                                                         
 
-	// va에 해당하는 페이지를 찾았다면 page 변수에 할당하고 return
-	if((e = hash_find(&spt->sptHash, &page.hash_elem)) != NULL) {
-		return hash_entry(e, struct page, hash_elem);
-	}
-	else {
-		return NULL;
-	}
+	// va에 해당하는 페이지를 찾았다면 해당 page 리턴
+    return e != NULL ? hash_entry(e, struct page, hash_elem) : NULL;
 }
 
 
@@ -191,31 +213,56 @@ vm_evict_frame (void) {
  * memory is full, this function evicts the frame to get the available memory
  * space.*/
 // 사용 가능한 프레임을 얻는 함수
+// static struct frame *
+// vm_get_frame (void) {
+// 	struct frame *frame = NULL;
+// 	/* TODO: Fill this function. */
+
+// 	// 1페이지 만큼 유저 영역 프레임 할당
+// 	void *kva = palloc_get_page(PAL_USER);
+
+// 	// 프레임 할당받지 못했으면 커널 패닉
+// 	if(kva == NULL) {
+// 		PANIC("vm_get_frame : palloc_get_page result is NULL");
+// 	}
+
+// 	// frame 구조체에 가상 메모리 할당 + 가상 주소 반환
+// 	frame = (struct frame *)malloc(sizeof(struct frame));
+
+// 	// kva, page 초기화 작업
+// 	frame->kva = kva;
+// 	frame->page = NULL;
+
+
+// 	ASSERT (frame != NULL);
+// 	ASSERT (frame->page == NULL);
+
+// 	// 사용준비 완료된 frame 반환
+// 	return frame;
+// }
+
+// 사용 가능한 프레임을 얻는 함수
 static struct frame *
 vm_get_frame (void) {
 	struct frame *frame = NULL;
 	/* TODO: Fill this function. */
 
-	// 1페이지 만큼 유저 영역 프레임 할당
-	void *kva = palloc_get_page(PAL_USER);
-
-	// 프레임 할당받지 못했으면 커널 패닉
-	if(kva == NULL) {
-		PANIC("vm_get_frame : palloc_get_page result is NULL");
-	}
-
-	// frame 구조체에 가상 메모리 할당 + 가상 주소 반환
+	/** Project 3-Memory Management */
+	// 프레임 가상주소 할당
 	frame = (struct frame *)malloc(sizeof(struct frame));
-
-	// kva, page 초기화 작업
-	frame->kva = kva;
-	frame->page = NULL;
-
-
 	ASSERT (frame != NULL);
-	ASSERT (frame->page == NULL);
 
-	// 사용준비 완료된 frame 반환
+	// 1페이지 만큼 유저 영역 프레임 할당 후 0으로 초기화
+	frame->kva = palloc_get_page(PAL_USER | PAL_ZERO);  
+
+    if (frame->kva == NULL)
+        frame = vm_evict_frame();  
+    else
+        list_push_back(&frame_table, &frame->frame_elem);
+
+    frame->page = NULL;
+
+	ASSERT (frame->page == NULL);
 	return frame;
 }
 
@@ -399,7 +446,9 @@ vm_do_claim_page (struct page *page) {
 	struct thread *cur = thread_current();
 
 	// 현재 스레드 페이지 테이블에 page 주소, frame 주소, 쓰기가능여부와 함께 PTE 추가하기
-	pml4_set_page(cur->pml4, page->va, frame->kva, page->writable);
+	if(!pml4_set_page(cur->pml4, page->va, frame->kva, page->writable)) {
+		return false;
+	}
 
 	// 실제로 페이지를 메모리에 로드한다.
 	return swap_in (page, frame->kva);
@@ -445,6 +494,7 @@ supplemental_page_table_init (struct supplemental_page_table *spt UNUSED) {
 	// spt, 해시함수, 페이지 VA 비교함수, 보조값 
 	// spt 해시 테이블 초기화하기 ( spt->sptHash가 hash 테이블 타입이다 )
 	hash_init(&spt->sptHash, page_hash, page_less, NULL);
+	/* 유선이는 이렇게함 hash_init(spt, page_hash, page_less, NULL); */
 }
 
 /* Copy supplemental page table from src to dst */
@@ -534,4 +584,14 @@ hash_page_destroy(struct hash_elem *e, void *aux)
     destroy(page);
 	// 페이지 구조체 메모리 해제
     free(page);
+}
+
+// 해시 테이블 버킷 내의 두 페이지 주소값 비교
+bool 
+page_less(const struct hash_elem *a, const struct hash_elem *b, void *aux)
+{
+	struct page *page_a = hash_entry(a, struct page, hash_elem);
+	struct page *page_b = hash_entry(b, struct page, hash_elem);
+
+	return page_a->va < page_b->va;
 }

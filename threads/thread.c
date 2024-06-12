@@ -788,10 +788,15 @@ donate_priority(void){
 			break;
 		}
 		struct thread *holder = cur->wait_on_lock->holder;//lock을 가지고 있는 스레드를 가져옴
+		if(cur == NULL) {
+			break;
+		}
 		holder->priority = cur->priority;
 		cur = holder;
 	}
 }
+
+
 //priority 계산 함수. MLFQS를 위해 추가한 함수.
 void
 mlfqs_calculate_priority (struct thread *t)
